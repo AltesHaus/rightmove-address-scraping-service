@@ -4,7 +4,7 @@
   "description": "Multi-step pipeline to resolve full UK addresses from Rightmove listings",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && npx playwright install chromium --with-deps",
     "start": "node dist/api-server.js",
     "dev": "ts-node src/index.ts",
     "dev:api": "ts-node src/api-server.ts",
