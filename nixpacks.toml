@@ -1,5 +1,6 @@
 [phases.setup]
-nixPkgs = ["nodejs", "npm"]
+# npm is bundled with nodejs in Nix; do not list it separately
+nixPkgs = ["nodejs"]
 
 [phases.install]
 cmd = "npm ci"
