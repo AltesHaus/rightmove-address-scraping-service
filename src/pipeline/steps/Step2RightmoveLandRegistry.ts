@@ -191,7 +191,7 @@ export class Step2RightmoveLandRegistry implements PipelineStep {
             await page.locator('text=Property sale history').first().click({ force: true, timeout: 5000 });
             await page.waitForTimeout(2000);
           }
-        } catch (e) {
+        } catch (e: any) {
           console.log('[Step2RightmoveLandRegistry] Failed to click sales history:', e.message);
           // Continue anyway
         }
