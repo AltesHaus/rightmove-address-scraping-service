@@ -1,4 +1,4 @@
-import { PipelineStep, PropertyInput, StepResult, FriendAPIResponse, PropertyImage, PropertyCoordinates } from '../types';
+import { PipelineStep, PropertyInput, StepResult, FriendAPIResponse, PropertyImage } from '../types';
 import { HttpClient } from '../../utils/http';
 import { APIError, ParseError } from '../../utils/errors';
 import { sanitizePropertyId } from '../../utils/validation';
@@ -101,16 +101,11 @@ export class Step1FriendAPI implements PipelineStep {
     const images = this.extractImages(data);
     console.log(`[Step1FriendAPI] Images extracted: ${images.length}`);
     
-    // Extract coordinates if available
-    const coordinates = this.extractCoordinates(data);
-    console.log(`[Step1FriendAPI] Coordinates extracted:`, coordinates);
-    
     return {
       success: true,
       address: fullAddress.trim(),
       confidence: 1.0, // Friend's API is our highest confidence source
       images,
-      coordinates,
       metadata: {
         responseTime,
         source: 'friend_api',
@@ -190,51 +185,5 @@ export class Step1FriendAPI implements PipelineStep {
     }
     
     return images;
-  }
-
-  private extractCoordinates(data: any): PropertyCoordinates | undefined {
-    // Check common coordinate field names
-    const coordinateFields = [
-      ['latitude', 'longitude'],
-      ['lat', 'lng'],
-      ['lat', 'lon'],
-      ['y', 'x'], // Sometimes coordinates are stored as x,y
-    ];
-    
-    for (const [latField, lngField] of coordinateFields) {
-      const lat = data[latField];
-      const lng = data[lngField];
-      
-      if (lat && lng && !isNaN(parseFloat(lat)) && !isNaN(parseFloat(lng))) {
-        return {
-          latitude: parseFloat(lat),
-          longitude: parseFloat(lng),
-          accuracy: 'APPROXIMATE',
-          source: 'rightmove' // Friend API gets data from Rightmove originally
-        };
-      }
-    }
-    
-    // Check if coordinates are nested in location object
-    if (data.location && typeof data.location === 'object') {
-      const location = data.location;
-      if (location.latitude && location.longitude) {
-        return {
-          latitude: parseFloat(location.latitude),
-          longitude: parseFloat(location.longitude),
-          accuracy: location.accuracy || 'APPROXIMATE',
-          source: 'rightmove'
-        };
-      }
-    }
-    
-    // Check UPRN field for potential coordinate data (less likely but possible)
-    if (data.UPRN && typeof data.UPRN === 'string') {
-      // UPRNs sometimes contain encoded location data, but this would need specific decoding
-      // For now, we'll skip this unless you have a specific format
-    }
-    
-    console.log(`[Step1FriendAPI] No coordinates found in data keys: ${Object.keys(data).join(', ')}`);
-    return undefined;
   }
 }

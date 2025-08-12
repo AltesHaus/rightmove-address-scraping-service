@@ -143,13 +143,25 @@ export class Step2RightmoveLandRegistry implements PipelineStep {
       
       await page.goto(url, { waitUntil: 'networkidle', timeout: 60000 });
       
-      // Handle cookie consent
+      // Handle cookie consent - improved handling
       try {
-        await page.waitForSelector('#onetrust-reject-all-handler', { timeout: 3000 });
-        await page.click('#onetrust-reject-all-handler');
-        await page.waitForTimeout(1000);
-      } catch (e) {
-        // No cookie dialog
+        // Try reject first (original approach)
+        const rejectButton = page.locator('#onetrust-reject-all-handler');
+        if (await rejectButton.count() > 0) {
+          console.log('[Step2RightmoveLandRegistry] Rejecting cookies...');
+          await rejectButton.click({ timeout: 3000 });
+          await page.waitForTimeout(1000);
+        } else {
+          // Fallback to accept if reject not found
+          const acceptButton = page.locator('button:has-text("Accept All")').or(page.locator('#onetrust-accept-btn-handler')).or(page.locator('button:has-text("Accept")'));
+          if (await acceptButton.count() > 0) {
+            console.log('[Step2RightmoveLandRegistry] Accepting cookies...');
+            await acceptButton.first().click({ timeout: 3000 });
+            await page.waitForTimeout(1000);
+          }
+        }
+      } catch (e: any) {
+        console.log('[Step2RightmoveLandRegistry] Cookie consent handling failed:', e.message);
       }
       
       // Extract postcode
@@ -401,7 +413,38 @@ export class Step2RightmoveLandRegistry implements PipelineStep {
         }
       }
       
-      // Strategy 3: Date + price range search (wider fallback)
+      // Strategy 3: Outcode + year + exact price (fallback for postcode mismatches)
+      if (rightmoveData.postcode) {
+        const outcode = rightmoveData.postcode.split(' ')[0]; // Extract first part (e.g., "SW1W" from "SW1W 8DB")
+        console.log(`[Step2RightmoveLandRegistry] Trying outcode fallback: ${outcode}`);
+        const outcodeResult = await this.searchByOutcodeYearPrice(outcode, sale);
+        if (outcodeResult.success && outcodeResult.results.length > 0) {
+          const propertyDetails = this.extractPropertyDetails(outcodeResult.results[0]);
+          return {
+            success: true,
+            fullAddress: propertyDetails.fullAddress,
+            strategy: 'outcode-year-price',
+            verifiedData: propertyDetails
+          };
+        }
+      }
+
+      // Strategy 4: Outcode + year (wider fallback)
+      if (rightmoveData.postcode) {
+        const outcode = rightmoveData.postcode.split(' ')[0];
+        const outcodeYearResult = await this.searchByOutcodeYear(outcode, sale);
+        if (outcodeYearResult.success && outcodeYearResult.results.length > 0) {
+          const propertyDetails = this.extractPropertyDetails(outcodeYearResult.results[0]);
+          return {
+            success: true,
+            fullAddress: propertyDetails.fullAddress,
+            strategy: 'outcode-year',
+            verifiedData: propertyDetails
+          };
+        }
+      }
+
+      // Strategy 5: Date + price range search (wider fallback)
       const dateResult = await this.searchByDateRange(sale);
       if (dateResult.success && dateResult.results.length > 0) {
         const propertyDetails = this.extractPropertyDetails(dateResult.results[0]);
@@ -583,6 +626,59 @@ WHERE {
   FILTER(?pricePaid = ${sale.rawPrice})
 }
 LIMIT 10`;
+
+    return await this.executeSparqlQuery(sparql);
+  }
+
+  /**
+   * Search by outcode (first part of postcode), year AND exact price
+   */
+  private async searchByOutcodeYearPrice(outcode: string, sale: any) {
+    const sparql = `
+PREFIX lrcommon: <http://landregistry.data.gov.uk/def/common/>
+PREFIX lrppi: <http://landregistry.data.gov.uk/def/ppi/>
+SELECT ?transx ?pricePaid ?date ?paon ?street ?postcode ?propType ?estateType ?newBuild
+WHERE {
+  ?transx lrppi:pricePaid ?pricePaid ;
+           lrppi:transactionDate ?date ;
+           lrppi:propertyAddress ?addr .
+  ?addr lrcommon:paon ?paon ;
+        lrcommon:street ?street ;
+        lrcommon:postcode ?postcode .
+  OPTIONAL { ?transx lrppi:propertyType ?propType }
+  OPTIONAL { ?transx lrppi:estateType ?estateType }
+  OPTIONAL { ?transx lrppi:newBuild ?newBuild }
+  FILTER(STRSTARTS(?postcode, "${outcode}"))
+  FILTER(YEAR(?date) = ${sale.year})
+  FILTER(?pricePaid = ${sale.rawPrice})
+}
+LIMIT 10`;
+
+    return await this.executeSparqlQuery(sparql);
+  }
+
+  /**
+   * Search by outcode (first part of postcode) and year only
+   */
+  private async searchByOutcodeYear(outcode: string, sale: any) {
+    const sparql = `
+PREFIX lrcommon: <http://landregistry.data.gov.uk/def/common/>
+PREFIX lrppi: <http://landregistry.data.gov.uk/def/ppi/>
+SELECT ?transx ?pricePaid ?date ?paon ?street ?postcode ?propType ?estateType ?newBuild
+WHERE {
+  ?transx lrppi:pricePaid ?pricePaid ;
+           lrppi:transactionDate ?date ;
+           lrppi:propertyAddress ?addr .
+  ?addr lrcommon:paon ?paon ;
+        lrcommon:street ?street ;
+        lrcommon:postcode ?postcode .
+  OPTIONAL { ?transx lrppi:propertyType ?propType }
+  OPTIONAL { ?transx lrppi:estateType ?estateType }
+  OPTIONAL { ?transx lrppi:newBuild ?newBuild }
+  FILTER(STRSTARTS(?postcode, "${outcode}"))
+  FILTER(YEAR(?date) = ${sale.year})
+}
+LIMIT 20`;
 
     return await this.executeSparqlQuery(sparql);
   }
