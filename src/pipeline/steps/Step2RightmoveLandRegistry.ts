@@ -1,4 +1,4 @@
-import { PipelineStep, PropertyInput, StepResult, SaleRecord, PropertyImage } from '../types';
+import { PipelineStep, PropertyInput, StepResult, SaleRecord } from '../types';
 import { APIError, ParseError } from '../../utils/errors';
 
 /**
@@ -46,14 +46,11 @@ export class Step2RightmoveLandRegistry implements PipelineStep {
             success: true,
             address: landRegistryResult.fullAddress,
             confidence: 0.9, // High confidence for Land Registry verified addresses
-            images: rightmoveData.images || [],
             metadata: {
               responseTime: Date.now() - startTime,
               source: 'land_registry_verified',
               strategy: landRegistryResult.strategy,
               verifiedData: landRegistryResult.verifiedData,
-              imagesExtracted: rightmoveData.images?.length || 0,
-              galleryInteracted: rightmoveData.images?.some((img: PropertyImage) => img.type === 'gallery') || false,
               rightmoveData: {
                 postcode: rightmoveData.postcode,
                 salesCount: rightmoveData.sales.length
@@ -72,12 +69,9 @@ export class Step2RightmoveLandRegistry implements PipelineStep {
           success: true,
           address: fallbackAddress,
           confidence: 0.3, // Low confidence for constructed addresses
-          images: rightmoveData.images || [],
           metadata: {
             responseTime: Date.now() - startTime,
             source: 'rightmove_fallback',
-            imagesExtracted: rightmoveData.images?.length || 0,
-            galleryInteracted: rightmoveData.images?.some((img: PropertyImage) => img.type === 'gallery') || false,
             rightmoveData: {
               postcode: rightmoveData.postcode,
               salesCount: rightmoveData.sales?.length || 0
@@ -207,8 +201,8 @@ export class Step2RightmoveLandRegistry implements PipelineStep {
               }
               
               if (foundTable) {
-                // Look for year pattern
-                const yearMatch = line.match(/^(20[0-3][0-9])$/);
+                // Look for year pattern (1900s-2039)
+                const yearMatch = line.match(/^(19[0-9][0-9]|20[0-3][0-9])$/);
                 if (yearMatch && i + 1 < lines.length) {
                   const nextLine = lines[i + 1].trim();
                   const priceMatch = nextLine.match(/^£([\d,]+)$/);
@@ -227,8 +221,8 @@ export class Step2RightmoveLandRegistry implements PipelineStep {
                   }
                 }
                 
-                // Alternative: year and price on same line
-                const samLineMatch = line.match(/(20[0-3][0-9])\s+£([\d,]+)/);
+                // Alternative: year and price on same line (1900s-2039)
+                const samLineMatch = line.match(/(19[0-9][0-9]|20[0-3][0-9])\s+£([\d,]+)/);
                 if (samLineMatch) {
                   const year = parseInt(samLineMatch[1]);
                   const priceStr = samLineMatch[2];
@@ -265,11 +259,6 @@ export class Step2RightmoveLandRegistry implements PipelineStep {
         });
       }
       
-      // Extract all images from the page
-      console.log(`[Step2RightmoveLandRegistry] Extracting images for property ${propertyId}`);
-      const images = await this.extractPropertyImages(page);
-      console.log(`[Step2RightmoveLandRegistry] Found ${images.length} images`);
-      
       await context.close();
       
       return {
@@ -277,7 +266,6 @@ export class Step2RightmoveLandRegistry implements PipelineStep {
         propertyId,
         postcode,
         sales,
-        images,
         url
       };
       
@@ -291,185 +279,6 @@ export class Step2RightmoveLandRegistry implements PipelineStep {
       if (browser) {
         await browser.close();
       }
-    }
-  }
-
-  /**
-   * Extract all property images from the Rightmove page
-   */
-  private async extractPropertyImages(page: any): Promise<PropertyImage[]> {
-    const images: PropertyImage[] = [];
-    
-    try {
-      // First, extract images that are already visible on the page
-      const visibleImages = await page.evaluate(() => {
-        const imageData: Array<{url: string, type: string, caption?: string}> = [];
-        
-        // Main property image
-        const mainImg = document.querySelector('img[data-testid="gallery-main-image"]') || 
-                       document.querySelector('.gallery-image img') ||
-                       document.querySelector('[data-test="gallery-main-image"] img');
-        if (mainImg) {
-          const src = mainImg.getAttribute('src') || mainImg.getAttribute('data-src');
-          if (src && src.includes('rightmove')) {
-            imageData.push({
-              url: src,
-              type: 'main',
-              caption: mainImg.getAttribute('alt') || 'Main property image'
-            });
-          }
-        }
-        
-        // Gallery thumbnail images
-        const thumbnails = document.querySelectorAll('img[data-testid="gallery-thumbnail"]') ||
-                          document.querySelectorAll('.gallery-thumbnails img') ||
-                          document.querySelectorAll('[data-test="gallery-thumbnail"] img');
-        thumbnails.forEach((img: any, index: number) => {
-          const src = img.getAttribute('src') || img.getAttribute('data-src');
-          if (src && src.includes('rightmove')) {
-            imageData.push({
-              url: src,
-              type: 'gallery',
-              caption: img.getAttribute('alt') || `Gallery image ${index + 1}`
-            });
-          }
-        });
-        
-        // Look for floorplan images
-        const floorplans = document.querySelectorAll('img[alt*="floorplan" i], img[src*="floorplan" i]');
-        floorplans.forEach((img: any) => {
-          const src = img.getAttribute('src') || img.getAttribute('data-src');
-          if (src) {
-            imageData.push({
-              url: src,
-              type: 'floorplan',
-              caption: 'Property floorplan'
-            });
-          }
-        });
-        
-        // Look for street view images
-        const streetViews = document.querySelectorAll('img[alt*="street" i], img[src*="street" i]');
-        streetViews.forEach((img: any) => {
-          const src = img.getAttribute('src') || img.getAttribute('data-src');
-          if (src) {
-            imageData.push({
-              url: src,
-              type: 'streetview',
-              caption: 'Street view'
-            });
-          }
-        });
-        
-        // Generic property images (fallback)
-        const allImages = document.querySelectorAll('img');
-        allImages.forEach((img: any, index: number) => {
-          const src = img.getAttribute('src') || img.getAttribute('data-src');
-          if (src && src.includes('rightmove') && 
-              !imageData.some(existing => existing.url === src)) {
-            imageData.push({
-              url: src,
-              type: 'other',
-              caption: `Property image ${index + 1}`
-            });
-          }
-        });
-        
-        return imageData;
-      });
-      
-      // Add visible images to results
-      visibleImages.forEach((imgData: any, index: number) => {
-        images.push({
-          url: imgData.url,
-          type: imgData.type as PropertyImage['type'],
-          caption: imgData.caption,
-          order: index
-        });
-      });
-      
-      // Try to interact with gallery to load more images
-      let galleryInteracted = false;
-      try {
-        // Look for gallery button or gallery container
-        const galleryButton = page.locator('[data-testid="gallery-launch-button"]').first() ||
-                             page.locator('.gallery-launch').first() ||
-                             page.locator('button:has-text("View all photos")').first() ||
-                             page.locator('button:has-text("Gallery")').first();
-                             
-        const galleryButtonCount = await galleryButton.count();
-        if (galleryButtonCount > 0) {
-          console.log(`[Step2RightmoveLandRegistry] Found gallery button, clicking to load more images`);
-          await galleryButton.click({ timeout: 3000 });
-          await page.waitForTimeout(2000); // Wait for gallery to load
-          galleryInteracted = true;
-          
-          // Extract images from gallery modal/overlay
-          const galleryImages = await page.evaluate(() => {
-            const galleryData: Array<{url: string, caption?: string}> = [];
-            
-            // Look for gallery modal images
-            const modalImages = document.querySelectorAll('.gallery-modal img, .image-gallery img, .photo-gallery img');
-            modalImages.forEach((img: any, index: number) => {
-              const src = img.getAttribute('src') || img.getAttribute('data-src');
-              if (src && src.includes('rightmove')) {
-                galleryData.push({
-                  url: src,
-                  caption: img.getAttribute('alt') || `Gallery image ${index + 1}`
-                });
-              }
-            });
-            
-            return galleryData;
-          });
-          
-          // Add gallery images that aren't already in our list
-          galleryImages.forEach((imgData: any, index: number) => {
-            if (!images.some(existing => existing.url === imgData.url)) {
-              images.push({
-                url: imgData.url,
-                type: 'gallery',
-                caption: imgData.caption,
-                order: images.length + index
-              });
-            }
-          });
-          
-          // Close gallery modal if it's blocking
-          try {
-            const closeButton = page.locator('.gallery-close, .modal-close, [aria-label="Close"]').first();
-            const closeButtonCount = await closeButton.count();
-            if (closeButtonCount > 0) {
-              await closeButton.click({ timeout: 1000 });
-            }
-          } catch (e) {
-            // Ignore close button errors
-          }
-        }
-      } catch (e: any) {
-        console.log(`[Step2RightmoveLandRegistry] Could not interact with gallery: ${e.message}`);
-      }
-      
-      // Clean up and deduplicate images
-      const cleanedImages = images
-        .filter(img => img.url && img.url.length > 0)
-        .filter((img, index, self) => 
-          index === self.findIndex(other => other.url === img.url)
-        )
-        .map((img, index) => ({
-          ...img,
-          order: index,
-          // Convert relative URLs to absolute
-          url: img.url.startsWith('http') ? img.url : `https://media.rightmove.co.uk${img.url}`
-        }));
-      
-      console.log(`[Step2RightmoveLandRegistry] Image extraction complete: ${cleanedImages.length} images found (gallery interacted: ${galleryInteracted})`);
-      
-      return cleanedImages;
-      
-    } catch (error: any) {
-      console.error(`[Step2RightmoveLandRegistry] Image extraction error:`, error.message);
-      return [];
     }
   }
 
