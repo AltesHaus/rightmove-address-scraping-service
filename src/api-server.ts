@@ -11,6 +11,7 @@ interface APIResponse {
   confidence: number;
   source: string;
   processingTime: number;
+  weeks_OTM?: string;
   metadata: {
     stepUsed: number;
     strategy?: string | null;
@@ -74,6 +75,11 @@ app.get('/api/resolve/:propertyId', async (req: Request, res: Response) => {
         verifiedData: result.metadata.verifiedData || null
       }
     };
+
+    // Add weeks_OTM if available (from Friend API)
+    if (result.metadata.Weeks_OTM !== undefined) {
+      response.weeks_OTM = result.metadata.Weeks_OTM;
+    }
 
     if (!result.success) {
       response.error = result.error || 'Address not found';
@@ -159,6 +165,11 @@ app.post('/api/resolve-batch', async (req: Request, res: Response) => {
             verifiedData: result.metadata.verifiedData || null
           }
         };
+
+        // Add weeks_OTM if available (from Friend API)
+        if (result.metadata.Weeks_OTM !== undefined) {
+          response.weeks_OTM = result.metadata.Weeks_OTM;
+        }
 
         if (!result.success) {
           response.error = result.error || 'Address not found';

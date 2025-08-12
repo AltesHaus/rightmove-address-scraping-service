@@ -38,6 +38,7 @@ export interface AddressResult {
     allErrors?: string[];
     strategy?: string;
     verifiedData?: any;
+    Weeks_OTM?: string;
   };
   error?: string;
 }
@@ -66,6 +67,7 @@ export interface FriendAPIResponse {
     bedrooms?: number;
     bathrooms?: number;
     propertyType?: string;
+    Weeks_OTM?: string;
     [key: string]: any;
   };
   error?: string;

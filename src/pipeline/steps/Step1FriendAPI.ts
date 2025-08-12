@@ -93,6 +93,10 @@ export class Step1FriendAPI implements PipelineStep {
 
     console.log(`[Step1FriendAPI] Success: Found address "${fullAddress}" in ${responseTime}ms`);
     
+    // Extract Weeks_OTM if available
+    const Weeks_OTM = data.Weeks_OTM;
+    console.log(`[Step1FriendAPI] Weeks_OTM extracted: ${Weeks_OTM}`);
+    
     return {
       success: true,
       address: fullAddress.trim(),
@@ -101,6 +105,7 @@ export class Step1FriendAPI implements PipelineStep {
         responseTime,
         source: 'friend_api',
         propertyId: data.id,
+        Weeks_OTM: Weeks_OTM,
         rawResponse: response
       }
     };
