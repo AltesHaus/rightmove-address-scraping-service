@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  address-resolver:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      # Add your friend's API configuration here
+      - FRIEND_API_URL=${FRIEND_API_URL:-}
+      - FRIEND_API_KEY=${FRIEND_API_KEY:-}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 60s
+    volumes:
+      # Optional: Mount logs directory
+      - ./logs:/app/logs
+    networks:
+      - address-resolver-network
+
+networks:
+  address-resolver-network:
+    driver: bridge

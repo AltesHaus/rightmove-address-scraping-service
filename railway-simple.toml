@@ -1,0 +1,14 @@
+[build]
+# Use Node.js instead of Docker for faster deployment
+builder = "nixpacks"
+
+[deploy]
+healthcheckPath = "/health"
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+
+[environment]
+PORT = "8080"
+NODE_ENV = "production"
+# Playwright will be installed automatically by Nixpacks
