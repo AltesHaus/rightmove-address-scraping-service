@@ -1,5 +1,6 @@
 [build]
-builder = "nixpacks"
+builder = "Docker"
+dockerfilePath = "Dockerfile.railway"
 
 [deploy]
 healthcheckPath = "/health"
