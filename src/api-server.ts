@@ -1,7 +1,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import { AddressResolver } from './pipeline/AddressResolver';
-import { PropertyInput } from './pipeline/types';
+import { PropertyInput, PropertyImage } from './pipeline/types';
 
 interface APIResponse {
   success: boolean;
@@ -12,10 +12,13 @@ interface APIResponse {
   source: string;
   processingTime: number;
   weeks_OTM?: string;
+  images?: PropertyImage[];
   metadata: {
     stepUsed: number;
     strategy?: string | null;
     verifiedData?: any | null;
+    imagesExtracted?: number;
+    galleryInteracted?: boolean;
   };
   error?: string;
 }
@@ -72,9 +75,16 @@ app.get('/api/resolve/:propertyId', async (req: Request, res: Response) => {
       metadata: {
         stepUsed: result.metadata.stepUsed,
         strategy: result.metadata.strategy || null,
-        verifiedData: result.metadata.verifiedData || null
+        verifiedData: result.metadata.verifiedData || null,
+        imagesExtracted: result.metadata.imagesExtracted || 0,
+        galleryInteracted: result.metadata.galleryInteracted || false
       }
     };
+
+    // Add images if available
+    if (result.images && result.images.length > 0) {
+      response.images = result.images;
+    }
 
     // Add weeks_OTM if available (from Friend API)
     if (result.metadata.Weeks_OTM !== undefined) {
@@ -162,9 +172,16 @@ app.post('/api/resolve-batch', async (req: Request, res: Response) => {
           metadata: {
             stepUsed: result.metadata.stepUsed,
             strategy: result.metadata.strategy || null,
-            verifiedData: result.metadata.verifiedData || null
+            verifiedData: result.metadata.verifiedData || null,
+            imagesExtracted: result.metadata.imagesExtracted || 0,
+            galleryInteracted: result.metadata.galleryInteracted || false
           }
         };
+
+        // Add images if available
+        if (result.images && result.images.length > 0) {
+          response.images = result.images;
+        }
 
         // Add weeks_OTM if available (from Friend API)
         if (result.metadata.Weeks_OTM !== undefined) {

@@ -16,6 +16,14 @@ export interface PropertyDetails {
   postcode?: string;
   tenure?: string;
   sizeSqFeet?: number;
+  images?: PropertyImage[];
+}
+
+export interface PropertyImage {
+  url: string;
+  type: 'main' | 'gallery' | 'floorplan' | 'streetview' | 'other';
+  caption?: string;
+  order?: number;
 }
 
 export interface SaleRecord {
@@ -30,6 +38,7 @@ export interface AddressResult {
   address?: string;
   confidence: number;
   source: 'friend_api' | 'rightmove_land_registry' | 'land_registry' | 'error';
+  images?: PropertyImage[];
   metadata: {
     stepUsed: number;
     apiResponseTime: number;
@@ -39,6 +48,8 @@ export interface AddressResult {
     strategy?: string;
     verifiedData?: any;
     Weeks_OTM?: string;
+    imagesExtracted?: number;
+    galleryInteracted?: boolean;
   };
   error?: string;
 }
@@ -52,6 +63,7 @@ export interface StepResult {
   success: boolean;
   address?: string;
   confidence: number;
+  images?: PropertyImage[];
   error?: string;
   metadata?: Record<string, any>;
 }
