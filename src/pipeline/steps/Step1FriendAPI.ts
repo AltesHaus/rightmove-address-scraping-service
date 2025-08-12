@@ -1,4 +1,4 @@
-import { PipelineStep, PropertyInput, StepResult, FriendAPIResponse } from '../types';
+import { PipelineStep, PropertyInput, StepResult, FriendAPIResponse, PropertyImage, PropertyCoordinates } from '../types';
 import { HttpClient } from '../../utils/http';
 import { APIError, ParseError } from '../../utils/errors';
 import { sanitizePropertyId } from '../../utils/validation';
@@ -97,15 +97,27 @@ export class Step1FriendAPI implements PipelineStep {
     const Weeks_OTM = data.Weeks_OTM;
     console.log(`[Step1FriendAPI] Weeks_OTM extracted: ${Weeks_OTM}`);
     
+    // Extract images from gallery
+    const images = this.extractImages(data);
+    console.log(`[Step1FriendAPI] Images extracted: ${images.length}`);
+    
+    // Extract coordinates if available
+    const coordinates = this.extractCoordinates(data);
+    console.log(`[Step1FriendAPI] Coordinates extracted:`, coordinates);
+    
     return {
       success: true,
       address: fullAddress.trim(),
       confidence: 1.0, // Friend's API is our highest confidence source
+      images,
+      coordinates,
       metadata: {
         responseTime,
         source: 'friend_api',
         propertyId: data.id,
         Weeks_OTM: Weeks_OTM,
+        imagesExtracted: images.length,
+        galleryInteracted: true,
         rawResponse: response
       }
     };
@@ -144,5 +156,85 @@ export class Step1FriendAPI implements PipelineStep {
     const hasCommonAddressPattern = /^\d+\s+[A-Za-z]/.test(trimmed); // Starts with number + street name
     
     return hasNumber || hasAddressWords || hasCommonAddressPattern;
+  }
+
+  private extractImages(data: any): PropertyImage[] {
+    const images: PropertyImage[] = [];
+    
+    // Extract from gallery field (comma-separated URLs)
+    if (data.gallery && typeof data.gallery === 'string') {
+      const imageUrls = data.gallery.split(',').map((url: string) => url.trim()).filter((url: string) => url.length > 0);
+      
+      imageUrls.forEach((url: string, index: number) => {
+        images.push({
+          url,
+          type: index === 0 ? 'main' : 'gallery',
+          caption: index === 0 ? 'Main photo' : `Gallery image ${index}`,
+          order: index
+        });
+      });
+    }
+    
+    // Check for floorplan_gallery
+    if (data.floorplan_gallery && Array.isArray(data.floorplan_gallery)) {
+      data.floorplan_gallery.forEach((floorplan: any, index: number) => {
+        if (floorplan && typeof floorplan === 'object' && floorplan.url) {
+          images.push({
+            url: floorplan.url,
+            type: 'floorplan',
+            caption: floorplan.caption || `Floorplan ${index + 1}`,
+            order: images.length
+          });
+        }
+      });
+    }
+    
+    return images;
+  }
+
+  private extractCoordinates(data: any): PropertyCoordinates | undefined {
+    // Check common coordinate field names
+    const coordinateFields = [
+      ['latitude', 'longitude'],
+      ['lat', 'lng'],
+      ['lat', 'lon'],
+      ['y', 'x'], // Sometimes coordinates are stored as x,y
+    ];
+    
+    for (const [latField, lngField] of coordinateFields) {
+      const lat = data[latField];
+      const lng = data[lngField];
+      
+      if (lat && lng && !isNaN(parseFloat(lat)) && !isNaN(parseFloat(lng))) {
+        return {
+          latitude: parseFloat(lat),
+          longitude: parseFloat(lng),
+          accuracy: 'APPROXIMATE',
+          source: 'rightmove' // Friend API gets data from Rightmove originally
+        };
+      }
+    }
+    
+    // Check if coordinates are nested in location object
+    if (data.location && typeof data.location === 'object') {
+      const location = data.location;
+      if (location.latitude && location.longitude) {
+        return {
+          latitude: parseFloat(location.latitude),
+          longitude: parseFloat(location.longitude),
+          accuracy: location.accuracy || 'APPROXIMATE',
+          source: 'rightmove'
+        };
+      }
+    }
+    
+    // Check UPRN field for potential coordinate data (less likely but possible)
+    if (data.UPRN && typeof data.UPRN === 'string') {
+      // UPRNs sometimes contain encoded location data, but this would need specific decoding
+      // For now, we'll skip this unless you have a specific format
+    }
+    
+    console.log(`[Step1FriendAPI] No coordinates found in data keys: ${Object.keys(data).join(', ')}`);
+    return undefined;
   }
 }

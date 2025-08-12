@@ -1,4 +1,4 @@
-import { PipelineStep, PropertyInput, StepResult, SaleRecord } from '../types';
+import { PipelineStep, PropertyInput, StepResult, SaleRecord, PropertyImage } from '../types';
 import { APIError, ParseError } from '../../utils/errors';
 
 /**
@@ -8,7 +8,7 @@ import { APIError, ParseError } from '../../utils/errors';
  * 1. Extract property data and sales history from Rightmove
  * 2. Search UK Land Registry using corrected SPARQL queries
  * 3. Return verified full address with high confidence
- * 4. Fallback to constructed address if Land Registry search fails
+ * 4. Return failure if Land Registry search fails (no fallback addresses)
  */
 export class Step2RightmoveLandRegistry implements PipelineStep {
   name = 'Rightmove + Land Registry';
@@ -46,11 +46,15 @@ export class Step2RightmoveLandRegistry implements PipelineStep {
             success: true,
             address: landRegistryResult.fullAddress,
             confidence: 0.9, // High confidence for Land Registry verified addresses
+            images: rightmoveData.images || [],
+            coordinates: rightmoveData.coordinates,
             metadata: {
               responseTime: Date.now() - startTime,
               source: 'land_registry_verified',
               strategy: landRegistryResult.strategy,
               verifiedData: landRegistryResult.verifiedData,
+              imagesExtracted: rightmoveData.images?.length || 0,
+              galleryInteracted: rightmoveData.images?.some((img: PropertyImage) => img.type === 'gallery') || false,
               rightmoveData: {
                 postcode: rightmoveData.postcode,
                 salesCount: rightmoveData.sales.length
@@ -60,26 +64,27 @@ export class Step2RightmoveLandRegistry implements PipelineStep {
         }
       }
 
-      // Step 3: Fallback to constructed address from Rightmove
-      if (rightmoveData.postcode) {
-        const fallbackAddress = `Property ${input.propertyId}, ${rightmoveData.postcode}`;
-        console.log(`[Step2RightmoveLandRegistry] Land Registry search failed, using fallback: ${fallbackAddress}`);
-        
-        return {
-          success: true,
-          address: fallbackAddress,
-          confidence: 0.3, // Low confidence for constructed addresses
-          metadata: {
-            responseTime: Date.now() - startTime,
-            source: 'rightmove_fallback',
-            rightmoveData: {
-              postcode: rightmoveData.postcode,
-              salesCount: rightmoveData.sales?.length || 0
-            },
-            landRegistryAttempted: rightmoveData.sales && rightmoveData.sales.length > 0
-          }
-        };
-      }
+      // Step 3: Return success but with null address if Land Registry search fails
+      console.log(`[Step2RightmoveLandRegistry] Land Registry search failed, returning null address`);
+      
+      return {
+        success: true,
+        address: undefined,
+        confidence: 0,
+        images: rightmoveData.images || [],
+        coordinates: rightmoveData.coordinates,
+        metadata: {
+          responseTime: Date.now() - startTime,
+          source: 'land_registry_failed',
+          imagesExtracted: rightmoveData.images?.length || 0,
+          galleryInteracted: rightmoveData.images?.some((img: PropertyImage) => img.type === 'gallery') || false,
+          rightmoveData: {
+            postcode: rightmoveData.postcode,
+            salesCount: rightmoveData.sales?.length || 0
+          },
+          landRegistryAttempted: rightmoveData.sales && rightmoveData.sales.length > 0
+        }
+      };
 
       // Complete failure
       return {
@@ -163,6 +168,47 @@ export class Step2RightmoveLandRegistry implements PipelineStep {
       if (postcodeMatch) {
         postcode = postcodeMatch.replace('-', ' ').toUpperCase();
       }
+      
+      // Extract coordinates from JavaScript data
+      const coordinates = await page.evaluate(() => {
+        try {
+          // Check window.adInfo first (most reliable)
+          if ((window as any).adInfo?.propertyData?.location) {
+            const location = (window as any).adInfo.propertyData.location;
+            if (location.latitude && location.longitude) {
+              return {
+                latitude: location.latitude,
+                longitude: location.longitude,
+                accuracy: location.pinType || 'UNKNOWN',
+                source: 'rightmove'
+              };
+            }
+          }
+          
+          // Fallback: Check for coordinates in script tags
+          const scriptTags = Array.from(document.querySelectorAll('script'));
+          for (const script of scriptTags) {
+            const text = script.textContent || '';
+            
+            // Look for latitude/longitude patterns
+            const latMatch = text.match(/"latitude":(-?\d+\.\d+)/);
+            const lngMatch = text.match(/"longitude":(-?\d+\.\d+)/);
+            
+            if (latMatch && lngMatch) {
+              return {
+                latitude: parseFloat(latMatch[1]),
+                longitude: parseFloat(lngMatch[1]),
+                accuracy: 'APPROXIMATE',
+                source: 'rightmove'
+              };
+            }
+          }
+          return null;
+        } catch (e) {
+          console.error('Error extracting coordinates:', e);
+          return null;
+        }
+      });
       
       // Scroll and wait for content
       await page.waitForTimeout(2000);
@@ -299,6 +345,7 @@ export class Step2RightmoveLandRegistry implements PipelineStep {
         propertyId,
         postcode,
         sales,
+        coordinates,
         url
       };
       

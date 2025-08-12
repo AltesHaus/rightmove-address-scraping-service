@@ -107,6 +107,8 @@ async function testAPI(baseUrl = 'http://localhost:3000') {
       console.log(`🏠 Address: ${data.fullAddress || 'Not found'}`);
       console.log(`🎯 Source: ${data.source}`);
       console.log(`📊 Confidence: ${data.confidence}`);
+      console.log(`🧭 Coordinates: ${data.coordinates ? `${data.coordinates.latitude}, ${data.coordinates.longitude}` : 'Not found'}`);
+      console.log(`🖼️ Images: ${data.images?.length || 0} images`);
       console.log(`⏱️ Processing time: ${data.processingTime}ms`);
       
       if (data.metadata?.stepUsed) {

@@ -1,7 +1,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import { AddressResolver } from './pipeline/AddressResolver';
-import { PropertyInput, PropertyImage } from './pipeline/types';
+import { PropertyInput, PropertyImage, PropertyCoordinates } from './pipeline/types';
 
 interface APIResponse {
   success: boolean;
@@ -13,6 +13,7 @@ interface APIResponse {
   processingTime: number;
   weeks_OTM?: string;
   images?: PropertyImage[];
+  coordinates?: PropertyCoordinates;
   metadata: {
     stepUsed: number;
     strategy?: string | null;
@@ -84,6 +85,11 @@ app.get('/api/resolve/:propertyId', async (req: Request, res: Response) => {
     // Add images if available
     if (result.images && result.images.length > 0) {
       response.images = result.images;
+    }
+
+    // Add coordinates if available
+    if (result.coordinates) {
+      response.coordinates = result.coordinates;
     }
 
     // Add weeks_OTM if available (from Friend API)
@@ -181,6 +187,11 @@ app.post('/api/resolve-batch', async (req: Request, res: Response) => {
         // Add images if available
         if (result.images && result.images.length > 0) {
           response.images = result.images;
+        }
+
+        // Add coordinates if available
+        if (result.coordinates) {
+          response.coordinates = result.coordinates;
         }
 
         // Add weeks_OTM if available (from Friend API)

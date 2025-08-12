@@ -105,6 +105,7 @@ export class AddressResolver {
             confidence: stepResult.confidence,
             source: this.getSourceName(stepNumber),
             images: stepResult.images || [],
+            coordinates: stepResult.coordinates,
             metadata: {
               stepUsed: stepNumber,
               apiResponseTime: stepResult.metadata?.responseTime || 0,

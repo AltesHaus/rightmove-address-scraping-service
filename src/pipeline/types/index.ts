@@ -26,6 +26,13 @@ export interface PropertyImage {
   order?: number;
 }
 
+export interface PropertyCoordinates {
+  latitude: number;
+  longitude: number;
+  accuracy?: 'ACCURATE_POINT' | 'APPROXIMATE' | 'POSTCODE';
+  source?: 'rightmove' | 'google_maps' | 'ordnance_survey';
+}
+
 export interface SaleRecord {
   date: string;
   price: number;
@@ -39,6 +46,7 @@ export interface AddressResult {
   confidence: number;
   source: 'friend_api' | 'rightmove_land_registry' | 'land_registry' | 'error';
   images?: PropertyImage[];
+  coordinates?: PropertyCoordinates;
   metadata: {
     stepUsed: number;
     apiResponseTime: number;
@@ -64,6 +72,7 @@ export interface StepResult {
   address?: string;
   confidence: number;
   images?: PropertyImage[];
+  coordinates?: PropertyCoordinates;
   error?: string;
   metadata?: Record<string, any>;
 }
