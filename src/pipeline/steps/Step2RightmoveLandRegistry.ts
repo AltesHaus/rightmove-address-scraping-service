@@ -207,44 +207,53 @@ export class Step2RightmoveLandRegistry implements PipelineStep {
             const lines = historySection.split('\n');
             
             // Debug: log first few lines to see what we're working with
-            console.log('[Sales History Debug] First 10 lines:', lines.slice(0, 10));
+            console.log('[Sales History Debug] First 15 lines:', lines.slice(0, 15));
             
             let foundTable = false;
             // Increased search range and added more trigger phrases
             for (let i = 0; i < lines.length && i < 50; i++) {
               const line = lines[i].trim();
               
-              if (line.includes('Year sold') || line.includes('Sold price') || 
-                  line.includes('Listing:') || line.includes('Guide Price') || 
-                  line === '' || line.match(/^\d{4}$/)) {
+              if (line.includes('Property sale history') || line.includes('Year sold') || line.includes('Sold price') || 
+                  line.includes('Listing:') || line.includes('Guide Price')) {
                 foundTable = true;
                 continue;
               }
               
               if (foundTable) {
-                // Look for year pattern (1900s-2039)
+                // Look for year pattern (1900s-2039) - exact match
                 const yearMatch = line.match(/^(19[0-9][0-9]|20[0-3][0-9])$/);
-                if (yearMatch && i + 1 < lines.length) {
-                  const nextLine = lines[i + 1].trim();
-                  const priceMatch = nextLine.match(/^£([\d,]+)$/);
-                  if (priceMatch) {
-                    const year = parseInt(yearMatch[1]);
-                    const priceStr = priceMatch[1];
-                    const rawPrice = parseInt(priceStr.replace(/,/g, ''));
-                    
-                    // Lower threshold for older properties (1990s could be cheaper)
-                    if (rawPrice >= 50000) {
-                      salesData.push({
-                        year,
-                        price: `£${priceStr}`,
-                        rawPrice
-                      });
+                if (yearMatch) {
+                  // Look for price in the next few lines (skip headers and empty lines)
+                  for (let j = i + 1; j < Math.min(i + 4, lines.length); j++) {
+                    const nextLine = lines[j].trim();
+                    // Skip empty lines, percentage lines, and header remnants
+                    if (!nextLine || nextLine.includes('Year sold') || nextLine.includes('Sold price') ||
+                        nextLine.match(/^[+\-]\d+%$/)) {
+                      continue;
+                    }
+                    // More flexible price matching (handle potential invisible chars)
+                    const priceMatch = nextLine.match(/£([\d,]+)/);
+                    if (priceMatch) {
+                      const year = parseInt(yearMatch[1]);
+                      const priceStr = priceMatch[1];
+                      const rawPrice = parseInt(priceStr.replace(/,/g, ''));
+                      
+                      // Lower threshold for older properties (1990s could be cheaper)
+                      if (rawPrice >= 50000) {
+                        salesData.push({
+                          year,
+                          price: `£${priceStr}`,
+                          rawPrice
+                        });
+                        break; // Found price, stop looking
+                      }
                     }
                   }
                 }
                 
-                // Alternative: year and price on same line (1900s-2039)
-                const samLineMatch = line.match(/(19[0-9][0-9]|20[0-3][0-9])\s+£([\d,]+)/);
+                // Alternative: year and price on same line (1900s-2039) - more flexible
+                const samLineMatch = line.match(/(19[0-9][0-9]|20[0-3][0-9]).*£([\d,]+)/);
                 if (samLineMatch) {
                   const year = parseInt(samLineMatch[1]);
                   const priceStr = samLineMatch[2];
@@ -279,6 +288,8 @@ export class Step2RightmoveLandRegistry implements PipelineStep {
           
           return uniqueSales.sort((a, b) => b.year - a.year);
         });
+        
+        console.log(`[Step2RightmoveLandRegistry] Sales extraction completed. Found ${sales.length} sales records.`);
       }
       
       await context.close();
@@ -313,33 +324,23 @@ export class Step2RightmoveLandRegistry implements PipelineStep {
     }
 
     for (const sale of rightmoveData.sales) {
-      console.log(`[Step2RightmoveLandRegistry] Searching Land Registry for ${sale.year} sale of ${sale.price}`);
+      console.log(`[Step2RightmoveLandRegistry] Searching Land Registry for ${sale.year} sale of ${sale.price} in ${rightmoveData.postcode}`);
       
-      // Strategy 1: Exact price search
-      const exactResult = await this.searchByExactPrice(sale);
-      if (exactResult.success && exactResult.results.length > 0) {
-        const propertyDetails = this.extractPropertyDetails(exactResult.results[0]);
-        return {
-          success: true,
-          fullAddress: propertyDetails.fullAddress,
-          strategy: 'exact-price',
-          verifiedData: propertyDetails
-        };
+      // Strategy 1: PRECISE search - postcode + year + exact price (ALL THREE must match)
+      if (rightmoveData.postcode) {
+        const preciseResult = await this.searchByPostcodeYearPrice(rightmoveData.postcode, sale);
+              if (preciseResult.success && preciseResult.results.length > 0) {
+        const propertyDetails = this.extractPropertyDetails(preciseResult.results[0]);
+          return {
+            success: true,
+            fullAddress: propertyDetails.fullAddress,
+            strategy: 'postcode-year-price',
+            verifiedData: propertyDetails
+          };
+        }
       }
       
-      // Strategy 2: Date + price range search
-      const dateResult = await this.searchByDateRange(sale);
-      if (dateResult.success && dateResult.results.length > 0) {
-        const propertyDetails = this.extractPropertyDetails(dateResult.results[0]);
-        return {
-          success: true,
-          fullAddress: propertyDetails.fullAddress,
-          strategy: 'date-range',
-          verifiedData: propertyDetails
-        };
-      }
-      
-      // Strategy 3: Postcode + year search
+      // Strategy 2: Postcode + year (fallback if exact price doesn't match)
       if (rightmoveData.postcode) {
         const postcodeResult = await this.searchByPostcodeYear(rightmoveData.postcode, sale);
         if (postcodeResult.success && postcodeResult.results.length > 0) {
@@ -351,6 +352,18 @@ export class Step2RightmoveLandRegistry implements PipelineStep {
             verifiedData: propertyDetails
           };
         }
+      }
+      
+      // Strategy 3: Date + price range search (wider fallback)
+      const dateResult = await this.searchByDateRange(sale);
+      if (dateResult.success && dateResult.results.length > 0) {
+        const propertyDetails = this.extractPropertyDetails(dateResult.results[0]);
+        return {
+          success: true,
+          fullAddress: propertyDetails.fullAddress,
+          strategy: 'date-range',
+          verifiedData: propertyDetails
+        };
       }
     }
     
@@ -366,7 +379,7 @@ export class Step2RightmoveLandRegistry implements PipelineStep {
       const https = await import('https');
       
       return new Promise((resolve, reject) => {
-        const data = JSON.stringify(sparql);
+        const data = sparql; // Send SPARQL as plain text, not JSON
         
         const options = {
           hostname: 'landregistry.data.gov.uk',
@@ -496,6 +509,33 @@ WHERE {
   FILTER(YEAR(?date) = ${sale.year})
 }
 LIMIT 20`;
+
+    return await this.executeSparqlQuery(sparql);
+  }
+
+  /**
+   * Search by postcode, year AND exact price (all three must match)
+   */
+  private async searchByPostcodeYearPrice(postcode: string, sale: any) {
+    const sparql = `
+PREFIX lrcommon: <http://landregistry.data.gov.uk/def/common/>
+PREFIX lrppi: <http://landregistry.data.gov.uk/def/ppi/>
+SELECT ?transx ?pricePaid ?date ?paon ?street ?postcode ?propType ?estateType ?newBuild
+WHERE {
+  ?transx lrppi:pricePaid ?pricePaid ;
+           lrppi:transactionDate ?date ;
+           lrppi:propertyAddress ?addr .
+  ?addr lrcommon:paon ?paon ;
+        lrcommon:street ?street ;
+        lrcommon:postcode ?postcode .
+  OPTIONAL { ?transx lrppi:propertyType ?propType }
+  OPTIONAL { ?transx lrppi:estateType ?estateType }
+  OPTIONAL { ?transx lrppi:newBuild ?newBuild }
+  FILTER(?postcode = "${postcode}")
+  FILTER(YEAR(?date) = ${sale.year})
+  FILTER(?pricePaid = ${sale.rawPrice})
+}
+LIMIT 10`;
 
     return await this.executeSparqlQuery(sparql);
   }
