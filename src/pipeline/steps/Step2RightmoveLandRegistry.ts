@@ -169,15 +169,30 @@ export class Step2RightmoveLandRegistry implements PipelineStep {
       await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
       await page.waitForTimeout(2000);
       
-      // Look for sale history
+      // Look for sale history - try multiple selectors
       const saleHistoryExists = await page.locator('text=Property sale history').count() > 0;
       let sales: any[] = [];
       
       if (saleHistoryExists) {
         try {
-          await page.locator('text=Property sale history').first().click({ force: true, timeout: 3000 });
-          await page.waitForTimeout(1000);
+          // Try button selector first (more specific)
+          const historyButton = page.locator('button:has-text("Property sale history")');
+          if (await historyButton.count() > 0) {
+            console.log('[Step2RightmoveLandRegistry] Clicking sales history button...');
+            await historyButton.first().click({ timeout: 5000 });
+            await page.waitForTimeout(2000); // Wait longer for expansion
+            
+            // Verify the section expanded by checking aria-expanded or content visibility
+            const isExpanded = await historyButton.first().getAttribute('aria-expanded');
+            console.log('[Step2RightmoveLandRegistry] Button aria-expanded:', isExpanded);
+          } else {
+            // Fallback to text selector
+            console.log('[Step2RightmoveLandRegistry] Using fallback text selector...');
+            await page.locator('text=Property sale history').first().click({ force: true, timeout: 5000 });
+            await page.waitForTimeout(2000);
+          }
         } catch (e) {
+          console.log('[Step2RightmoveLandRegistry] Failed to click sales history:', e.message);
           // Continue anyway
         }
         
@@ -188,14 +203,20 @@ export class Step2RightmoveLandRegistry implements PipelineStep {
           
           const historyIndex = bodyText.indexOf('Property sale history');
           if (historyIndex > -1) {
-            const historySection = bodyText.substring(historyIndex);
+            const historySection = bodyText.substring(historyIndex, historyIndex + 2000); // Limit to first 2000 chars for debugging
             const lines = historySection.split('\n');
             
+            // Debug: log first few lines to see what we're working with
+            console.log('[Sales History Debug] First 10 lines:', lines.slice(0, 10));
+            
             let foundTable = false;
-            for (let i = 0; i < lines.length && i < 20; i++) {
+            // Increased search range and added more trigger phrases
+            for (let i = 0; i < lines.length && i < 50; i++) {
               const line = lines[i].trim();
               
-              if (line.includes('Year sold') || line.includes('Sold price') || line === '') {
+              if (line.includes('Year sold') || line.includes('Sold price') || 
+                  line.includes('Listing:') || line.includes('Guide Price') || 
+                  line === '' || line.match(/^\d{4}$/)) {
                 foundTable = true;
                 continue;
               }
@@ -211,7 +232,8 @@ export class Step2RightmoveLandRegistry implements PipelineStep {
                     const priceStr = priceMatch[1];
                     const rawPrice = parseInt(priceStr.replace(/,/g, ''));
                     
-                    if (rawPrice >= 100000) {
+                    // Lower threshold for older properties (1990s could be cheaper)
+                    if (rawPrice >= 50000) {
                       salesData.push({
                         year,
                         price: `£${priceStr}`,
