@@ -1,7 +1,7 @@
-import { PipelineStep, PropertyInput, StepResult, FriendAPIResponse, PropertyImage } from '../types';
-import { HttpClient } from '../../utils/http';
-import { APIError, ParseError } from '../../utils/errors';
-import { sanitizePropertyId } from '../../utils/validation';
+import { PipelineStep, PropertyInput, StepResult, FriendAPIResponse, PropertyImage } from '../utils/types';
+import { HttpClient } from '../utils/http';
+import { APIError, ParseError } from '../utils/errors';
+import { sanitizePropertyId } from '../utils/validation';
 
 export class Step1FriendAPI implements PipelineStep {
   name = 'Friend API';
@@ -97,21 +97,16 @@ export class Step1FriendAPI implements PipelineStep {
     const Weeks_OTM = data.Weeks_OTM;
     console.log(`[Step1FriendAPI] Weeks_OTM extracted: ${Weeks_OTM}`);
     
-    // Extract images from gallery
-    const images = this.extractImages(data);
-    console.log(`[Step1FriendAPI] Images extracted: ${images.length}`);
     
     return {
       success: true,
       address: fullAddress.trim(),
       confidence: 1.0, // Friend's API is our highest confidence source
-      images,
       metadata: {
         responseTime,
         source: 'friend_api',
         propertyId: data.id,
         Weeks_OTM: Weeks_OTM,
-        imagesExtracted: images.length,
         galleryInteracted: true,
         rawResponse: response
       }
@@ -151,39 +146,5 @@ export class Step1FriendAPI implements PipelineStep {
     const hasCommonAddressPattern = /^\d+\s+[A-Za-z]/.test(trimmed); // Starts with number + street name
     
     return hasNumber || hasAddressWords || hasCommonAddressPattern;
-  }
-
-  private extractImages(data: any): PropertyImage[] {
-    const images: PropertyImage[] = [];
-    
-    // Extract from gallery field (comma-separated URLs)
-    if (data.gallery && typeof data.gallery === 'string') {
-      const imageUrls = data.gallery.split(',').map((url: string) => url.trim()).filter((url: string) => url.length > 0);
-      
-      imageUrls.forEach((url: string, index: number) => {
-        images.push({
-          url,
-          type: index === 0 ? 'main' : 'gallery',
-          caption: index === 0 ? 'Main photo' : `Gallery image ${index}`,
-          order: index
-        });
-      });
-    }
-    
-    // Check for floorplan_gallery
-    if (data.floorplan_gallery && Array.isArray(data.floorplan_gallery)) {
-      data.floorplan_gallery.forEach((floorplan: any, index: number) => {
-        if (floorplan && typeof floorplan === 'object' && floorplan.url) {
-          images.push({
-            url: floorplan.url,
-            type: 'floorplan',
-            caption: floorplan.caption || `Floorplan ${index + 1}`,
-            order: images.length
-          });
-        }
-      });
-    }
-    
-    return images;
   }
 }

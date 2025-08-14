@@ -1,5 +1,5 @@
 import { PipelineStep, PropertyInput, StepResult, SaleRecord, PropertyImage } from '../types';
-import { APIError, ParseError } from '../../utils/errors';
+import { APIError, ParseError } from '../utils/errors';
 
 /**
  * Step 2: Enhanced Rightmove + Land Registry Integration
