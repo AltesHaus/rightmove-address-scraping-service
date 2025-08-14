@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  address-resolver-api:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - MAX_WORKERS=4
+      # Add your API keys here:
+      # - FRIEND_API_BASE_URL=https://your-api-url
+      # - FRIEND_API_USER=your-email@example.com
+      # - SUPABASE_URL=your_supabase_url
+      # - SUPABASE_KEY=your_supabase_key
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 2G

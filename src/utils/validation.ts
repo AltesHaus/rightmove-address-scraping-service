@@ -1,4 +1,4 @@
-import { PropertyInput } from '../pipeline/types';
+import { PropertyInput } from './types';
 import { ValidationError } from './errors';
 
 export function validatePropertyInput(input: PropertyInput): void {

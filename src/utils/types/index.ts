@@ -2,6 +2,8 @@
 
 export interface PropertyInput {
   propertyId: string;
+  outcode?: string; // First part of postcode from API (e.g., "SW1W")
+  incode?: string; // Second part of postcode from API (e.g., "8DB")
   url?: string;
   salesHistory?: SaleRecord[];
   propertyDetails?: PropertyDetails;

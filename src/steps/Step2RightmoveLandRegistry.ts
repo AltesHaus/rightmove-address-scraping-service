@@ -1,14 +1,15 @@
-import { PipelineStep, PropertyInput, StepResult, SaleRecord, PropertyImage } from '../types';
+import { PipelineStep, PropertyInput, StepResult, SaleRecord, PropertyImage } from '../utils/types';
 import { APIError, ParseError } from '../utils/errors';
 
 /**
- * Step 2: Enhanced Rightmove + Land Registry Integration
+ * Step 2: Simplified Rightmove Check
  * 
- * This step implements the complete flow:
- * 1. Extract property data and sales history from Rightmove
- * 2. Search UK Land Registry using corrected SPARQL queries
- * 3. Return verified full address with high confidence
- * 4. Return failure if Land Registry search fails (no fallback addresses)
+ * This step now only:
+ * 1. Checks if property exists on Rightmove
+ * 2. Returns failure since no postcode/coordinates/images are extracted
+ * 
+ * Note: With postcode provided externally, this step could be enhanced
+ * to do Land Registry verification, but currently simplified.
  */
 export class Step2RightmoveLandRegistry implements PipelineStep {
   name = 'Rightmove + Land Registry';
@@ -35,54 +36,49 @@ export class Step2RightmoveLandRegistry implements PipelineStep {
         };
       }
 
-      // Step 2: Search Land Registry if we have sales history
+      // Step 2: Smart Land Registry search with postcode fallback strategy
       if (rightmoveData.sales && rightmoveData.sales.length > 0) {
-        console.log(`[Step2RightmoveLandRegistry] Found ${rightmoveData.sales.length} sales, searching Land Registry...`);
+        console.log(`[Step2RightmoveLandRegistry] Found ${rightmoveData.sales.length} sales, starting smart postcode search...`);
         
-        const landRegistryResult = await this.searchLandRegistry(rightmoveData);
+        const landRegistryResult = await this.smartPostcodeSearch(rightmoveData, input);
         
         if (landRegistryResult.success && landRegistryResult.fullAddress) {
           return {
             success: true,
             address: landRegistryResult.fullAddress,
             confidence: 0.9, // High confidence for Land Registry verified addresses
-            images: rightmoveData.images || [],
-            coordinates: rightmoveData.coordinates,
             metadata: {
               responseTime: Date.now() - startTime,
               source: 'land_registry_verified',
               strategy: landRegistryResult.strategy,
               verifiedData: landRegistryResult.verifiedData,
-              imagesExtracted: rightmoveData.images?.length || 0,
-              galleryInteracted: rightmoveData.images?.some((img: PropertyImage) => img.type === 'gallery') || false,
+              postcodeUsed: landRegistryResult.postcodeUsed,
               rightmoveData: {
-                postcode: rightmoveData.postcode,
                 salesCount: rightmoveData.sales.length
               }
             }
           };
         }
+        
+        console.log(`[Step2RightmoveLandRegistry] Smart postcode search failed: ${landRegistryResult.error}`);
+      } else if (rightmoveData.sales && rightmoveData.sales.length > 0) {
+        console.log(`[Step2RightmoveLandRegistry] Found ${rightmoveData.sales.length} sales, but no postcode provided for Land Registry search`);
       }
 
-      // Step 3: Return success but with null address if Land Registry search fails
-      console.log(`[Step2RightmoveLandRegistry] Land Registry search failed, returning null address`);
+      // Step 3: Return success but with null address since no Land Registry verification
+      console.log(`[Step2RightmoveLandRegistry] No address verification possible without external postcode`);
       
       return {
-        success: true,
+        success: false,
         address: undefined,
         confidence: 0,
-        images: rightmoveData.images || [],
-        coordinates: rightmoveData.coordinates,
         metadata: {
           responseTime: Date.now() - startTime,
-          source: 'land_registry_failed',
-          imagesExtracted: rightmoveData.images?.length || 0,
-          galleryInteracted: rightmoveData.images?.some((img: PropertyImage) => img.type === 'gallery') || false,
+          source: 'no_postcode_provided',
           rightmoveData: {
-            postcode: rightmoveData.postcode,
             salesCount: rightmoveData.sales?.length || 0
           },
-          landRegistryAttempted: rightmoveData.sales && rightmoveData.sales.length > 0
+          landRegistryAttempted: false
         }
       };
 
@@ -164,63 +160,7 @@ export class Step2RightmoveLandRegistry implements PipelineStep {
         console.log('[Step2RightmoveLandRegistry] Cookie consent handling failed:', e.message);
       }
       
-      // Extract postcode
-      const postcodeMatch = await page.evaluate(() => {
-        const scriptTags = Array.from(document.querySelectorAll('script'));
-        for (const script of scriptTags) {
-          const element = script as HTMLElement;
-          const text = element.textContent || '';
-          const match = text.match(/"nearbySoldPropertiesUrl":"[^"]*\/([a-z0-9-]+)\.html"/);
-          if (match) return match[1];
-        }
-        return null;
-      });
-      
-      let postcode = null;
-      if (postcodeMatch) {
-        postcode = postcodeMatch.replace('-', ' ').toUpperCase();
-      }
-      
-      // Extract coordinates from JavaScript data
-      const coordinates = await page.evaluate(() => {
-        try {
-          // Check window.adInfo first (most reliable)
-          if ((window as any).adInfo?.propertyData?.location) {
-            const location = (window as any).adInfo.propertyData.location;
-            if (location.latitude && location.longitude) {
-              return {
-                latitude: location.latitude,
-                longitude: location.longitude,
-                accuracy: location.pinType || 'UNKNOWN',
-                source: 'rightmove'
-              };
-            }
-          }
-          
-          // Fallback: Check for coordinates in script tags
-          const scriptTags = Array.from(document.querySelectorAll('script'));
-          for (const script of scriptTags) {
-            const text = script.textContent || '';
-            
-            // Look for latitude/longitude patterns
-            const latMatch = text.match(/"latitude":(-?\d+\.\d+)/);
-            const lngMatch = text.match(/"longitude":(-?\d+\.\d+)/);
-            
-            if (latMatch && lngMatch) {
-              return {
-                latitude: parseFloat(latMatch[1]),
-                longitude: parseFloat(lngMatch[1]),
-                accuracy: 'APPROXIMATE',
-                source: 'rightmove'
-              };
-            }
-          }
-          return null;
-        } catch (e) {
-          console.error('Error extracting coordinates:', e);
-          return null;
-        }
-      });
+      // Coordinates will be provided externally - no need to extract
       
       // Scroll and wait for content
       await page.waitForTimeout(2000);
@@ -355,9 +295,7 @@ export class Step2RightmoveLandRegistry implements PipelineStep {
       return {
         success: true,
         propertyId,
-        postcode,
         sales,
-        coordinates,
         url
       };
       
@@ -375,73 +313,126 @@ export class Step2RightmoveLandRegistry implements PipelineStep {
   }
 
   /**
-   * Search Land Registry using corrected SPARQL queries
+   * Smart postcode search with outcode+incode fallback strategies
    */
-  private async searchLandRegistry(rightmoveData: any): Promise<any> {
+  private async smartPostcodeSearch(rightmoveData: any, input: PropertyInput): Promise<any> {
+    if (!rightmoveData.sales || rightmoveData.sales.length === 0) {
+      return { success: false, error: 'No sales data for Land Registry search' };
+    }
+
+    const strategies = [];
+    
+    // Strategy 1: Full postcode (outcode + incode combined)
+    if (input.outcode && input.incode) {
+      const fullPostcode = `${input.outcode} ${input.incode}`;
+      strategies.push({
+        name: 'full-postcode',
+        postcode: fullPostcode,
+        description: `Full postcode: ${fullPostcode} (${input.outcode} + ${input.incode})`
+      });
+    }
+    
+    // Strategy 2: Outcode only (fallback when full postcode fails)
+    if (input.outcode) {
+      strategies.push({
+        name: 'outcode-only',
+        postcode: input.outcode,
+        description: `Outcode only: ${input.outcode}`,
+        isOutcode: true
+      });
+    }
+    
+    console.log(`[Step2RightmoveLandRegistry] Will try ${strategies.length} postcode strategies:`);
+    strategies.forEach((strategy, index) => {
+      console.log(`   ${index + 1}. ${strategy.description}`);
+    });
+    
+    // Try each strategy in order
+    for (const strategy of strategies) {
+      console.log(`\n[Step2RightmoveLandRegistry] Trying strategy: ${strategy.description}`);
+      
+      const result = strategy.isOutcode ? 
+        await this.searchLandRegistryWithOutcode(rightmoveData, strategy.postcode) :
+        await this.searchLandRegistryWithPostcode(rightmoveData, strategy.postcode);
+      
+      if (result.success && result.fullAddress) {
+        console.log(`[Step2RightmoveLandRegistry] ✅ SUCCESS with ${strategy.description}`);
+        return {
+          ...result,
+          postcodeUsed: strategy.postcode,
+          strategy: `${strategy.name}-${result.strategy}`
+        };
+      }
+      
+      console.log(`[Step2RightmoveLandRegistry] ❌ Failed with ${strategy.description}: ${result.error}`);
+    }
+    
+    return { 
+      success: false, 
+      error: `All ${strategies.length} postcode strategies failed`,
+      strategiesAttempted: strategies.map(s => s.description)
+    };
+  }
+
+  /**
+   * Search Land Registry using corrected SPARQL queries with provided postcode
+   */
+  private async searchLandRegistryWithPostcode(rightmoveData: any, postcode: string): Promise<any> {
     if (!rightmoveData.sales || rightmoveData.sales.length === 0) {
       return { success: false, error: 'No sales data for Land Registry search' };
     }
 
     for (const sale of rightmoveData.sales) {
-      console.log(`[Step2RightmoveLandRegistry] Searching Land Registry for ${sale.year} sale of ${sale.price} in ${rightmoveData.postcode}`);
+      console.log(`[Step2RightmoveLandRegistry] Searching Land Registry for ${sale.year} sale of ${sale.price} in ${postcode}`);
       
       // Strategy 1: PRECISE search - postcode + year + exact price (ALL THREE must match)
-      if (rightmoveData.postcode) {
-        const preciseResult = await this.searchByPostcodeYearPrice(rightmoveData.postcode, sale);
-              if (preciseResult.success && preciseResult.results.length > 0) {
+      const preciseResult = await this.searchByPostcodeYearPrice(postcode, sale);
+      if (preciseResult.success && preciseResult.results.length > 0) {
         const propertyDetails = this.extractPropertyDetails(preciseResult.results[0]);
-          return {
-            success: true,
-            fullAddress: propertyDetails.fullAddress,
-            strategy: 'postcode-year-price',
-            verifiedData: propertyDetails
-          };
-        }
+        return {
+          success: true,
+          fullAddress: propertyDetails.fullAddress,
+          strategy: 'postcode-year-price',
+          verifiedData: propertyDetails
+        };
       }
       
       // Strategy 2: Postcode + year (fallback if exact price doesn't match)
-      if (rightmoveData.postcode) {
-        const postcodeResult = await this.searchByPostcodeYear(rightmoveData.postcode, sale);
-        if (postcodeResult.success && postcodeResult.results.length > 0) {
-          const propertyDetails = this.extractPropertyDetails(postcodeResult.results[0]);
-          return {
-            success: true,
-            fullAddress: propertyDetails.fullAddress,
-            strategy: 'postcode-year',
-            verifiedData: propertyDetails
-          };
-        }
+      const postcodeResult = await this.searchByPostcodeYear(postcode, sale);
+      if (postcodeResult.success && postcodeResult.results.length > 0) {
+        const propertyDetails = this.extractPropertyDetails(postcodeResult.results[0]);
+        return {
+          success: true,
+          fullAddress: propertyDetails.fullAddress,
+          strategy: 'postcode-year',
+          verifiedData: propertyDetails
+        };
       }
       
       // Strategy 3: Outcode + year + exact price (fallback for postcode mismatches)
-      if (rightmoveData.postcode) {
-        const outcode = rightmoveData.postcode.split(' ')[0]; // Extract first part (e.g., "SW1W" from "SW1W 8DB")
-        console.log(`[Step2RightmoveLandRegistry] Trying outcode fallback: ${outcode}`);
-        const outcodeResult = await this.searchByOutcodeYearPrice(outcode, sale);
-        if (outcodeResult.success && outcodeResult.results.length > 0) {
-          const propertyDetails = this.extractPropertyDetails(outcodeResult.results[0]);
-          return {
-            success: true,
-            fullAddress: propertyDetails.fullAddress,
-            strategy: 'outcode-year-price',
-            verifiedData: propertyDetails
-          };
-        }
+      const outcode = postcode.split(' ')[0]; // Extract first part (e.g., "SW1W" from "SW1W 8DB")
+      console.log(`[Step2RightmoveLandRegistry] Trying outcode fallback: ${outcode}`);
+      const outcodeResult = await this.searchByOutcodeYearPrice(outcode, sale);
+      if (outcodeResult.success && outcodeResult.results.length > 0) {
+        const propertyDetails = this.extractPropertyDetails(outcodeResult.results[0]);
+        return {
+          success: true,
+          fullAddress: propertyDetails.fullAddress,
+          strategy: 'outcode-year-price',
+          verifiedData: propertyDetails
+        };
       }
 
       // Strategy 4: Outcode + year (wider fallback)
-      if (rightmoveData.postcode) {
-        const outcode = rightmoveData.postcode.split(' ')[0];
-        const outcodeYearResult = await this.searchByOutcodeYear(outcode, sale);
-        if (outcodeYearResult.success && outcodeYearResult.results.length > 0) {
-          const propertyDetails = this.extractPropertyDetails(outcodeYearResult.results[0]);
-          return {
-            success: true,
-            fullAddress: propertyDetails.fullAddress,
-            strategy: 'outcode-year',
-            verifiedData: propertyDetails
-          };
-        }
+      const outcodeYearResult = await this.searchByOutcodeYear(outcode, sale);
+      if (outcodeYearResult.success && outcodeYearResult.results.length > 0) {
+        const propertyDetails = this.extractPropertyDetails(outcodeYearResult.results[0]);
+        return {
+          success: true,
+          fullAddress: propertyDetails.fullAddress,
+          strategy: 'outcode-year',
+          verifiedData: propertyDetails
+        };
       }
 
       // Strategy 5: Date + price range search (wider fallback)
@@ -458,6 +449,47 @@ export class Step2RightmoveLandRegistry implements PipelineStep {
     }
     
     return { success: false, error: 'No Land Registry matches found' };
+  }
+
+  /**
+   * Search Land Registry using only outcode (optimized for performance)
+   */
+  private async searchLandRegistryWithOutcode(rightmoveData: any, outcode: string): Promise<any> {
+    if (!rightmoveData.sales || rightmoveData.sales.length === 0) {
+      return { success: false, error: 'No sales data for outcode search' };
+    }
+
+    for (const sale of rightmoveData.sales) {
+      console.log(`[Step2RightmoveLandRegistry] Searching Land Registry for ${sale.year} sale of ${sale.price} in outcode ${outcode}`);
+      
+      // Strategy 1: Outcode + year + exact price (fastest outcode search)
+      const outcodeResult = await this.searchByOutcodeYearPrice(outcode, sale);
+      if (outcodeResult.success && outcodeResult.results.length > 0) {
+        const propertyDetails = this.extractPropertyDetails(outcodeResult.results[0]);
+        return {
+          success: true,
+          fullAddress: propertyDetails.fullAddress,
+          strategy: 'outcode-year-price',
+          verifiedData: propertyDetails
+        };
+      }
+      
+      // Strategy 2: Outcode + year only (broader search)
+      const outcodeYearResult = await this.searchByOutcodeYear(outcode, sale);
+      if (outcodeYearResult.success && outcodeYearResult.results.length > 0) {
+        const propertyDetails = this.extractPropertyDetails(outcodeYearResult.results[0]);
+        return {
+          success: true,
+          fullAddress: propertyDetails.fullAddress,
+          strategy: 'outcode-year',
+          verifiedData: propertyDetails
+        };
+      }
+      
+      // Note: Skip date+price range for outcode as it would be too broad
+    }
+    
+    return { success: false, error: 'No outcode Land Registry matches found' };
   }
 
   /**
@@ -481,7 +513,7 @@ export class Step2RightmoveLandRegistry implements PipelineStep {
             'User-Agent': 'AddressResolver-Pipeline/1.0',
             'Content-Length': Buffer.byteLength(data)
           },
-          timeout: 15000
+          timeout: 45000  // Increased timeout for outcode queries
         };
         
         const req = https.request(options, (res) => {

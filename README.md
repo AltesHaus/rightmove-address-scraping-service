@@ -60,16 +60,77 @@ npm run dev
 
 ## Usage
 
-The project includes an `AddressScraper` class that can process multiple URLs in parallel:
+### Parallel Address Fetching
 
-```typescript
-import { AddressScraper } from './src/index';
+The system uses worker threads to fetch addresses in parallel with two-step fallback:
 
-const scraper = new AddressScraper();
-const addresses = await scraper.scrapeAddresses([
-  'https://rightmove.co.uk/property-1',
-  'https://rightmove.co.uk/property-2'
-]);
+1. **Step 1**: Friend API (high confidence)
+2. **Step 2**: Rightmove + UK Land Registry verification (requires postcode input)
+
+**Note**: Postcodes, coordinates, and images are not automatically extracted. Provide postcodes externally for Step 2 Land Registry verification.
+
+#### Environment Variables Required
+
+```bash
+# Supabase configuration
+SUPABASE_URL=your_supabase_url
+SUPABASE_KEY=your_supabase_key
+
+# Friend API configuration (optional - has defaults)
+FRIEND_API_BASE_URL=https://your-api-url
+FRIEND_API_USER=your-email@example.com
+```
+
+#### Option 1: With Supabase (Production)
+
+The main script fetches property IDs from Supabase and processes them:
+
+```bash
+npm run build
+npm start
+```
+
+#### Option 2: Standalone Usage (Custom Property IDs)
+
+Use the example module to process your own list of property IDs:
+
+```javascript
+const { fetchAddressesInParallel } = require('./example-usage');
+
+// Property data with optional postcodes for Land Registry verification
+const properties = [
+  { id: 123456789, postcode: 'SW1W 8DB' },
+  { id: 987654321, postcode: 'NW3 7RT' },
+  { id: 456789123 } // No postcode - will only use Friend API
+];
+
+const results = await fetchAddressesInParallel(properties, {
+  workerCount: 4,
+  onProgress: (progress) => {
+    console.log(`${progress.completed}/${progress.total} completed`);
+  }
+});
+
+console.log(`Found ${results.successful} addresses out of ${results.total}`);
+```
+
+#### Database Schema
+
+Your Supabase table (`rightmove_properties_v2`) should have these columns:
+
+```sql
+CREATE TABLE rightmove_properties_v2 (
+  id INTEGER PRIMARY KEY,
+  outcode TEXT, -- First part of postcode from API (e.g., "SW1W")
+  incode TEXT, -- Second part of postcode from API (e.g., "8DB")
+  processed_value TEXT,
+  success BOOLEAN,
+  confidence DECIMAL,
+  source TEXT,
+  error TEXT,
+  metadata JSONB,
+  processed_at TIMESTAMP
+);
 ```
 
 ## License
