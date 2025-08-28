@@ -23,9 +23,6 @@ COPY package*.json ./
 # Install all dependencies (including dev dependencies for build)
 RUN npm ci
 
-# Install Playwright browsers
-RUN npx playwright install chromium
-
 # Copy source code
 COPY . .
 
@@ -35,11 +32,14 @@ RUN npm run build
 # Remove dev dependencies after build
 RUN npm prune --omit=dev
 
-# Create non-root user for security
-RUN useradd -r -s /bin/false appuser && \
+# Create non-root user for security with home directory
+RUN useradd -r -m -s /bin/false appuser && \
     chown -R appuser:appuser /app
 
 USER appuser
+
+# Install Playwright browsers as the app user
+RUN npx playwright install chromium
 
 # Expose port
 EXPOSE 3000

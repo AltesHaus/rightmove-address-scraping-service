@@ -42,6 +42,9 @@ const helmet_1 = __importDefault(require("helmet"));
 const compression_1 = __importDefault(require("compression"));
 const worker_threads_1 = require("worker_threads");
 const path = __importStar(require("path"));
+const dotenv = __importStar(require("dotenv"));
+// Load environment variables
+dotenv.config();
 const app = (0, express_1.default)();
 const PORT = process.env.PORT || 3000;
 const MAX_CONCURRENT_WORKERS = parseInt(process.env.MAX_WORKERS || '4');
@@ -152,6 +155,7 @@ app.get('/', (req, res) => {
         description: 'Parallel address fetching for Rightmove properties',
         endpoints: {
             'POST /addresses': 'Fetch addresses for multiple properties',
+            'POST /bulk-process': 'Bulk process properties from database with cursor pagination',
             'GET /health': 'Health check'
         },
         example: {
@@ -216,6 +220,130 @@ app.post('/addresses', async (req, res) => {
         });
     }
 });
+// Bulk processing endpoint with cursor pagination
+app.post('/bulk-process', async (req, res) => {
+    try {
+        const { batchSize = 100, cursor = null, updateDatabase = true } = req.body;
+        console.log(`🚀 Starting bulk processing: ${batchSize} properties from cursor ${cursor || 'beginning'}`);
+        // Validation
+        if (batchSize < 1 || batchSize > 10000) {
+            return res.status(400).json({
+                success: false,
+                error: 'Batch size must be between 1 and 10000'
+            });
+        }
+        // Import Supabase dynamically to avoid startup dependency
+        const { createClient } = await Promise.resolve().then(() => __importStar(require('@supabase/supabase-js')));
+        if (!process.env.SUPABASE_URL || !process.env.SUPABASE_KEY) {
+            return res.status(500).json({
+                success: false,
+                error: 'Supabase configuration missing. Please set SUPABASE_URL and SUPABASE_KEY environment variables.'
+            });
+        }
+        const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+        // Fetch properties from database using cursor pagination
+        let query = supabase
+            .from('rightmove_properties_v2')
+            .select('id, outcode, incode')
+            .is('fullAddress', null)
+            .order('id', { ascending: true })
+            .limit(batchSize + 1); // +1 to check if more exist
+        if (cursor) {
+            query = query.gt('id', cursor);
+        }
+        console.log(`📋 Fetching properties with cursor: ${cursor || 'none'}, batchSize: ${batchSize}`);
+        const { data: dbProperties, error: fetchError } = await query;
+        if (fetchError) {
+            console.error('❌ Database fetch error:', fetchError);
+            return res.status(500).json({
+                success: false,
+                error: `Database fetch error: ${fetchError.message}`
+            });
+        }
+        if (!dbProperties || dbProperties.length === 0) {
+            return res.json({
+                success: true,
+                processed: 0,
+                successful: 0,
+                failed: 0,
+                hasMore: false,
+                summary: {
+                    totalTime: 0,
+                    averageTime: 0,
+                    successRate: 0
+                },
+                message: 'No more properties to process - all done! 🎉'
+            });
+        }
+        // Determine if more data exists and prepare batch for processing
+        const hasMore = dbProperties.length > batchSize;
+        const processingBatch = hasMore ? dbProperties.slice(0, -1) : dbProperties;
+        const nextCursor = hasMore ? processingBatch[processingBatch.length - 1].id : null;
+        console.log(`📦 Processing batch: ${processingBatch.length} properties (IDs ${processingBatch[0]?.id} to ${processingBatch[processingBatch.length - 1]?.id})`);
+        // Process addresses using existing batch logic
+        const batchStartTime = Date.now();
+        const result = await fetchAddressesInParallel(processingBatch);
+        const batchEndTime = Date.now();
+        const successful = result.results.filter(r => r.success).length;
+        const failed = result.results.length - successful;
+        // Update database if requested
+        if (updateDatabase) {
+            console.log(`💾 Updating database with ${result.results.length} results`);
+            let updateCount = 0;
+            for (const property of result.results) {
+                if (property.success && property.address) {
+                    const { error: updateError } = await supabase
+                        .from('rightmove_properties_v2')
+                        .update({ fullAddress: property.address })
+                        .eq('id', property.id);
+                    if (updateError) {
+                        console.error(`❌ Error updating ID ${property.id}:`, updateError);
+                    }
+                    else {
+                        updateCount++;
+                    }
+                }
+            }
+            console.log(`✅ Updated ${updateCount} records in database`);
+        }
+        const totalTime = batchEndTime - batchStartTime;
+        const averageTime = processingBatch.length > 0 ? totalTime / processingBatch.length : 0;
+        const successRate = processingBatch.length > 0 ? (successful / processingBatch.length) * 100 : 0;
+        const response = {
+            success: true,
+            processed: processingBatch.length,
+            successful,
+            failed,
+            nextCursor,
+            hasMore,
+            summary: {
+                totalTime,
+                averageTime,
+                successRate
+            },
+            nextCommand: hasMore ? {
+                cursor: nextCursor,
+                batchSize
+            } : undefined
+        };
+        // Log completion
+        console.log(`✅ Batch complete: ${successful}/${processingBatch.length} successful (${successRate.toFixed(1)}%)`);
+        if (hasMore) {
+            console.log(`📋 Next batch available: cursor=${nextCursor}, command: POST /bulk-process {"cursor": ${nextCursor}, "batchSize": ${batchSize}}`);
+        }
+        else {
+            console.log(`🎉 All properties processed! No more batches needed.`);
+        }
+        res.json(response);
+    }
+    catch (error) {
+        console.error('❌ Bulk processing error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message || 'Internal server error during bulk processing'
+        });
+    }
+});
 // Error handling middleware
 app.use((error, req, res, next) => {
     console.error('❌ Unhandled error:', error);
@@ -229,7 +357,7 @@ app.use('*', (req, res) => {
     res.status(404).json({
         success: false,
         error: 'Endpoint not found',
-        availableEndpoints: ['GET /', 'GET /health', 'POST /addresses']
+        availableEndpoints: ['GET /', 'GET /health', 'POST /addresses', 'POST /bulk-process']
     });
 });
 // Start server
